@@ -1,6 +1,6 @@
 appId: swmansion.enriched.markdown.example
 ---
-# checks the parsing of Markdown headers (# <> - ###### <>)
+# checks the parsing of Markdown blockquotes (> text)
 - launchApp
 
 - runFlow:
@@ -10,15 +10,13 @@ appId: swmansion.enriched.markdown.example
     file: '../subflows/set_enriched_text_value.yaml'
     env:
       VALUE: |
-        # H1
-        ## H2
-        ### H3
-        #### H4
-        ##### H5
-        ###### H6
-        ####### H not existing
+        > this is a text inside a blockquote
+
+         >this is also a text inside a blockquote
+
+        .>this isn't
 
 - runFlow:
     file: '../subflows/capture_or_assert_screenshot.yaml'
     env:
-      SCREENSHOT_NAME: 'header_display'
+      SCREENSHOT_NAME: 'blockquote_display'

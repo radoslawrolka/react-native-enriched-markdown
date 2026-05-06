@@ -1,6 +1,6 @@
 appId: swmansion.enriched.markdown.example
 ---
-# checks the parsing of Markdown headers (# <> - ###### <>)
+# checks the parsing of Markdown thematic breaks (--- / ***)
 - launchApp
 
 - runFlow:
@@ -10,15 +10,17 @@ appId: swmansion.enriched.markdown.example
     file: '../subflows/set_enriched_text_value.yaml'
     env:
       VALUE: |
-        # H1
-        ## H2
-        ### H3
-        #### H4
-        ##### H5
-        ###### H6
-        ####### H not existing
+        Above the first break
+
+        ---
+
+        Between the breaks
+
+        ***
+
+        Below the last break
 
 - runFlow:
     file: '../subflows/capture_or_assert_screenshot.yaml'
     env:
-      SCREENSHOT_NAME: 'header_display'
+      SCREENSHOT_NAME: 'thematic_break_display'
