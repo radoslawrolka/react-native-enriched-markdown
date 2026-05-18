@@ -3,7 +3,6 @@ tags:
   - smoke
   - inline
 ---
-# checks the parsing of spoiler inline markdown (||text||)
 - launchApp
 
 - runFlow:

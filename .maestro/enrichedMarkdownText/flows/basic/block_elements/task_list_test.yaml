@@ -3,7 +3,6 @@ tags:
   - smoke
   - block
 ---
-# checks the parsing of Markdown task lists (- [ ] unchecked / - [x] checked)
 - launchApp
 
 - runFlow:
