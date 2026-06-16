@@ -52,6 +52,7 @@
 #import "RCTFabricComponentsPlugins.h"
 #import <React/RCTConversions.h>
 #import <React/RCTFont.h>
+#import <React/RCTI18nUtil.h>
 
 using namespace facebook::react;
 
@@ -59,6 +60,7 @@ typedef NS_OPTIONS(NSUInteger, ENRMDirtyFlags) {
   ENRMDirtyNone = 0,
   ENRMDirtyRecreateSegments = 1 << 0,
   ENRMDirtyForceHeight = 1 << 1,
+  ENRMDirtyRender = 1 << 2,
 };
 
 static char kENRMSegmentFadeAnimatorKey;
@@ -108,6 +110,9 @@ static char kENRMSegmentFadeAnimatorKey;
   ENRMSpoilerOverlay _spoilerOverlay;
 
   NSLineBreakStrategy _lineBreakStrategy;
+
+  ENRMWritingDirectionMode _writingDirectionMode;
+  NSWritingDirection _resolvedLayoutDirection;
 }
 
 + (ComponentDescriptorProvider)componentDescriptorProvider
@@ -140,6 +145,9 @@ static char kENRMSegmentFadeAnimatorKey;
     _tableStreamingMode = ENRMTableStreamingModeProgressive;
     _selectionMenuConfig = (ENRMSelectionMenuConfig){.copyAsMarkdown = YES, .copyImageURL = YES};
     _lineBreakStrategy = NSLineBreakStrategyNone;
+    _writingDirectionMode = ENRMWritingDirectionModeFirstStrong;
+    _resolvedLayoutDirection =
+        [[RCTI18nUtil sharedInstance] isRTL] ? NSWritingDirectionRightToLeft : NSWritingDirectionLeftToRight;
 
     _fontScaleObserver = [[FontScaleObserver alloc] init];
     __weak EnrichedMarkdown *weakSelf = self;
@@ -344,6 +352,42 @@ static char kENRMSegmentFadeAnimatorKey;
   }
 }
 
+/// Yoga-resolved direction inherited from any ancestor `direction` style.
+/// In FirstStrong mode this feeds the neutral-paragraph fallback, so a change
+/// requires segment recreation.
+- (void)updateLayoutMetrics:(const LayoutMetrics &)layoutMetrics
+           oldLayoutMetrics:(const LayoutMetrics &)oldLayoutMetrics
+{
+  [super updateLayoutMetrics:layoutMetrics oldLayoutMetrics:oldLayoutMetrics];
+
+  NSWritingDirection resolved = _resolvedLayoutDirection;
+  if (layoutMetrics.layoutDirection == LayoutDirection::RightToLeft) {
+    resolved = NSWritingDirectionRightToLeft;
+  } else if (layoutMetrics.layoutDirection == LayoutDirection::LeftToRight) {
+    resolved = NSWritingDirectionLeftToRight;
+  }
+
+  if (resolved != _resolvedLayoutDirection) {
+    _resolvedLayoutDirection = resolved;
+    [self pushWritingDirectionToTableSegments];
+    if (_writingDirectionMode == ENRMWritingDirectionModeFirstStrong && _cachedMarkdown.length > 0) {
+      _dirtyFlags |= ENRMDirtyRecreateSegments | ENRMDirtyForceHeight;
+      [self renderMarkdownContent:_cachedMarkdown];
+    }
+  }
+}
+
+- (void)pushWritingDirectionToTableSegments
+{
+  for (RCTUIView *segment in _segmentViews) {
+    if ([segment isKindOfClass:[TableContainerView class]]) {
+      TableContainerView *tableView = (TableContainerView *)segment;
+      tableView.writingDirectionMode = _writingDirectionMode;
+      tableView.resolvedLayoutDirection = _resolvedLayoutDirection;
+    }
+  }
+}
+
 - (void)requestHeightUpdate
 {
   ENRMRequestHeightUpdate<EnrichedMarkdownState>(_state, _heightUpdateCounter, self);
@@ -366,6 +410,8 @@ static char kENRMSegmentFadeAnimatorKey;
   BOOL streamingAnimation = _streamingAnimation;
   ENRMTableStreamingMode tableStreamingMode = _tableStreamingMode;
   NSLineBreakStrategy lineBreakStrategy = _lineBreakStrategy;
+  ENRMWritingDirectionMode writingDirectionMode = _writingDirectionMode;
+  NSWritingDirection resolvedLayoutDirection = _resolvedLayoutDirection;
 
   __block NSArray<ENRMRenderedSegment *> *renderedSegments = nil;
   __block NSString *renderableMarkdown = nil;
@@ -386,6 +432,12 @@ static char kENRMSegmentFadeAnimatorKey;
 
         renderedSegments = ENRMRenderSegmentsFromAST(ast, config, allowTrailingMargin, allowFontScaling,
                                                      maxFontSizeMultiplier, lineBreakStrategy);
+        for (ENRMRenderedSegment *segment in renderedSegments) {
+          if (segment.kind == ENRMSegmentKindText && segment.textResult) {
+            ENRMApplyWritingDirectionMode(segment.textResult.attributedText, writingDirectionMode,
+                                          resolvedLayoutDirection);
+          }
+        }
         return YES;
       }
       apply:^{
@@ -401,8 +453,15 @@ static char kENRMSegmentFadeAnimatorKey;
     return nil;
   }
 
-  return ENRMRenderSegmentsFromAST(ast, _config, _allowTrailingMargin, _fontScaleObserver.allowFontScaling,
-                                   _maxFontSizeMultiplier, _lineBreakStrategy);
+  NSArray<ENRMRenderedSegment *> *segments =
+      ENRMRenderSegmentsFromAST(ast, _config, _allowTrailingMargin, _fontScaleObserver.allowFontScaling,
+                                _maxFontSizeMultiplier, _lineBreakStrategy);
+  for (ENRMRenderedSegment *segment in segments) {
+    if (segment.kind == ENRMSegmentKindText && segment.textResult) {
+      ENRMApplyWritingDirectionMode(segment.textResult.attributedText, _writingDirectionMode, _resolvedLayoutDirection);
+    }
+  }
+  return segments;
 }
 
 /// Synchronous rendering for mock view measurement (no UI updates needed).
@@ -538,6 +597,8 @@ static char kENRMSegmentFadeAnimatorKey;
   tableView.allowFontScaling = _fontScaleObserver.allowFontScaling;
   tableView.maxFontSizeMultiplier = _maxFontSizeMultiplier;
   tableView.enableLinkPreview = _enableLinkPreview;
+  tableView.writingDirectionMode = _writingDirectionMode;
+  tableView.resolvedLayoutDirection = _resolvedLayoutDirection;
 
   __weak EnrichedMarkdown *weakSelf = self;
 
@@ -560,6 +621,8 @@ static char kENRMSegmentFadeAnimatorKey;
 
 - (void)updateTableView:(TableContainerView *)view withSegment:(ENRMTableSegment *)tableSegment
 {
+  view.writingDirectionMode = _writingDirectionMode;
+  view.resolvedLayoutDirection = _resolvedLayoutDirection;
   NSUInteger previousRowCount = view.rowCount;
   [view applyTableNode:tableSegment.tableNode];
 
@@ -623,19 +686,19 @@ static char kENRMSegmentFadeAnimatorKey;
   const auto &oldViewProps = *std::static_pointer_cast<EnrichedMarkdownProps const>(_props);
   const auto &newViewProps = *std::static_pointer_cast<EnrichedMarkdownProps const>(props);
 
-  BOOL stylePropChanged = NO;
   BOOL markdownChanged = oldViewProps.markdown != newViewProps.markdown;
+  if (markdownChanged) {
+    _dirtyFlags |= ENRMDirtyRender;
+  }
 
   if (_config == nil) {
     _config = [[StyleConfig alloc] init];
     [_config setFontScaleMultiplier:_fontScaleObserver.effectiveFontScale];
   }
 
-  stylePropChanged = applyMarkdownStyleToConfig(_config, newViewProps.markdownStyle, oldViewProps.markdownStyle);
-
-  if (stylePropChanged) {
+  if (applyMarkdownStyleToConfig(_config, newViewProps.markdownStyle, oldViewProps.markdownStyle)) {
     [ENRMImageAttachment clearAttachmentRegistry];
-    _dirtyFlags |= ENRMDirtyForceHeight;
+    _dirtyFlags |= ENRMDirtyForceHeight | ENRMDirtyRender;
     if (!markdownChanged) {
       _dirtyFlags |= ENRMDirtyRecreateSegments;
     }
@@ -657,8 +720,7 @@ static char kENRMSegmentFadeAnimatorKey;
     if (_config != nil) {
       [_config setFontScaleMultiplier:_fontScaleObserver.effectiveFontScale];
     }
-    stylePropChanged = YES;
-    _dirtyFlags |= ENRMDirtyRecreateSegments | ENRMDirtyForceHeight;
+    _dirtyFlags |= ENRMDirtyRecreateSegments | ENRMDirtyForceHeight | ENRMDirtyRender;
   }
 
   if (newViewProps.maxFontSizeMultiplier != oldViewProps.maxFontSizeMultiplier) {
@@ -666,49 +728,40 @@ static char kENRMSegmentFadeAnimatorKey;
     if (_config != nil) {
       [_config setMaxFontSizeMultiplier:_maxFontSizeMultiplier];
     }
-    stylePropChanged = YES;
-    _dirtyFlags |= ENRMDirtyRecreateSegments | ENRMDirtyForceHeight;
+    _dirtyFlags |= ENRMDirtyRecreateSegments | ENRMDirtyForceHeight | ENRMDirtyRender;
   }
 
   if (newViewProps.allowTrailingMargin != oldViewProps.allowTrailingMargin) {
     _allowTrailingMargin = newViewProps.allowTrailingMargin;
-    _dirtyFlags |= ENRMDirtyRecreateSegments | ENRMDirtyForceHeight;
+    _dirtyFlags |= ENRMDirtyRecreateSegments | ENRMDirtyForceHeight | ENRMDirtyRender;
   }
 
-  BOOL md4cFlagsChanged = NO;
   if (newViewProps.md4cFlags.underline != oldViewProps.md4cFlags.underline) {
     _md4cFlags.underline = newViewProps.md4cFlags.underline;
-    md4cFlagsChanged = YES;
-    _dirtyFlags |= ENRMDirtyForceHeight;
+    _dirtyFlags |= ENRMDirtyForceHeight | ENRMDirtyRender;
   }
   if (newViewProps.md4cFlags.superscript != oldViewProps.md4cFlags.superscript) {
     _md4cFlags.superscript = newViewProps.md4cFlags.superscript;
-    md4cFlagsChanged = YES;
-    _dirtyFlags |= ENRMDirtyForceHeight;
+    _dirtyFlags |= ENRMDirtyForceHeight | ENRMDirtyRender;
   }
   if (newViewProps.md4cFlags.subscript != oldViewProps.md4cFlags.subscript) {
     _md4cFlags.subscript = newViewProps.md4cFlags.subscript;
-    md4cFlagsChanged = YES;
-    _dirtyFlags |= ENRMDirtyForceHeight;
+    _dirtyFlags |= ENRMDirtyForceHeight | ENRMDirtyRender;
   }
   if (newViewProps.md4cFlags.latexMath != oldViewProps.md4cFlags.latexMath) {
     _md4cFlags.latexMath = newViewProps.md4cFlags.latexMath;
-    md4cFlagsChanged = YES;
-    _dirtyFlags |= ENRMDirtyForceHeight;
+    _dirtyFlags |= ENRMDirtyForceHeight | ENRMDirtyRender;
   }
   if (newViewProps.md4cFlags.highlight != oldViewProps.md4cFlags.highlight) {
     _md4cFlags.highlight = newViewProps.md4cFlags.highlight;
-    md4cFlagsChanged = YES;
-    _dirtyFlags |= ENRMDirtyForceHeight;
+    _dirtyFlags |= ENRMDirtyForceHeight | ENRMDirtyRender;
   }
-  BOOL allowTrailingMarginChanged = newViewProps.allowTrailingMargin != oldViewProps.allowTrailingMargin;
 
   _enableLinkPreview = newViewProps.enableLinkPreview;
 
-  BOOL streamingAnimationChanged = newViewProps.streamingAnimation != oldViewProps.streamingAnimation;
-  if (streamingAnimationChanged) {
+  if (newViewProps.streamingAnimation != oldViewProps.streamingAnimation) {
     _streamingAnimation = newViewProps.streamingAnimation;
-    _dirtyFlags |= ENRMDirtyForceHeight;
+    _dirtyFlags |= ENRMDirtyForceHeight | ENRMDirtyRender;
     if (!_streamingAnimation) {
       for (RCTUIView *segment in _segmentViews) {
         if ([segment isKindOfClass:[EnrichedMarkdownInternalText class]]) {
@@ -722,13 +775,11 @@ static char kENRMSegmentFadeAnimatorKey;
     }
   }
 
-  BOOL streamingConfigChanged = NO;
   if (newViewProps.streamingConfig.tableMode != oldViewProps.streamingConfig.tableMode) {
     NSString *tableModeStr = [[NSString alloc] initWithUTF8String:newViewProps.streamingConfig.tableMode.c_str()];
     _tableStreamingMode =
         [tableModeStr isEqualToString:@"hidden"] ? ENRMTableStreamingModeHidden : ENRMTableStreamingModeProgressive;
-    streamingConfigChanged = YES;
-    _dirtyFlags |= ENRMDirtyForceHeight;
+    _dirtyFlags |= ENRMDirtyForceHeight | ENRMDirtyRender;
   }
 
   if (ENRMContextMenuItemsChanged(oldViewProps.contextMenuItems, newViewProps.contextMenuItems)) {
@@ -760,19 +811,25 @@ static char kENRMSegmentFadeAnimatorKey;
     }
   }
 
-  BOOL lineBreakStrategyChanged = newViewProps.lineBreakStrategyIOS != oldViewProps.lineBreakStrategyIOS;
-  if (lineBreakStrategyChanged) {
+  if (newViewProps.lineBreakStrategyIOS != oldViewProps.lineBreakStrategyIOS) {
     NSString *strategy = [[NSString alloc] initWithUTF8String:newViewProps.lineBreakStrategyIOS.c_str()];
     _lineBreakStrategy = ENRMResolveLineBreakStrategy(strategy);
-    _dirtyFlags |= ENRMDirtyForceHeight;
+    _dirtyFlags |= ENRMDirtyForceHeight | ENRMDirtyRender;
   }
 
-  if (markdownChanged || stylePropChanged || md4cFlagsChanged || allowTrailingMarginChanged ||
-      streamingAnimationChanged || streamingConfigChanged || lineBreakStrategyChanged) {
+  if (newViewProps.writingDirection != oldViewProps.writingDirection) {
+    NSString *value = [[NSString alloc] initWithUTF8String:newViewProps.writingDirection.c_str()];
+    _writingDirectionMode = ENRMResolveWritingDirectionMode(value);
+    _dirtyFlags |= ENRMDirtyRecreateSegments | ENRMDirtyForceHeight | ENRMDirtyRender;
+    [self pushWritingDirectionToTableSegments];
+  }
+
+  if (_dirtyFlags & ENRMDirtyRender) {
     _pendingStyleFingerprint =
         computeStyleFingerprint(newViewProps.markdownStyle) ^ std::hash<bool>{}(newViewProps.allowTrailingMargin);
     NSString *markdownString = [[NSString alloc] initWithUTF8String:newViewProps.markdown.c_str()];
     [self renderMarkdownContent:markdownString];
+    _dirtyFlags &= ~ENRMDirtyRender;
   }
 
   [super updateProps:props oldProps:oldProps];

@@ -35,8 +35,14 @@
 #import "RCTFabricComponentsPlugins.h"
 #import <React/RCTConversions.h>
 #import <React/RCTFont.h>
+#import <React/RCTI18nUtil.h>
 
 using namespace facebook::react;
+
+typedef NS_OPTIONS(NSUInteger, ENRMDirtyFlags) {
+  ENRMDirtyNone = 0,
+  ENRMDirtyRender = 1 << 0,
+};
 
 @interface EnrichedMarkdownText () <RCTEnrichedMarkdownTextViewProtocol, UITextViewDelegate>
 - (void)setupTextView;
@@ -96,6 +102,11 @@ using namespace facebook::react;
   ENRMSpoilerOverlayManager *_spoilerManager;
 
   NSLineBreakStrategy _lineBreakStrategy;
+
+  ENRMWritingDirectionMode _writingDirectionMode;
+  NSWritingDirection _resolvedLayoutDirection;
+
+  ENRMDirtyFlags _dirtyFlags;
 }
 
 + (ComponentDescriptorProvider)componentDescriptorProvider
@@ -135,6 +146,29 @@ using namespace facebook::react;
   }
 }
 
+/// Yoga-resolved direction inherited from any ancestor `direction` style.
+/// In FirstStrong mode this feeds the neutral-paragraph fallback, so a change
+/// requires a re-render of the cached markdown.
+- (void)updateLayoutMetrics:(const LayoutMetrics &)layoutMetrics
+           oldLayoutMetrics:(const LayoutMetrics &)oldLayoutMetrics
+{
+  [super updateLayoutMetrics:layoutMetrics oldLayoutMetrics:oldLayoutMetrics];
+
+  NSWritingDirection resolved = _resolvedLayoutDirection;
+  if (layoutMetrics.layoutDirection == LayoutDirection::RightToLeft) {
+    resolved = NSWritingDirectionRightToLeft;
+  } else if (layoutMetrics.layoutDirection == LayoutDirection::LeftToRight) {
+    resolved = NSWritingDirectionLeftToRight;
+  }
+
+  if (resolved != _resolvedLayoutDirection) {
+    _resolvedLayoutDirection = resolved;
+    if (_writingDirectionMode == ENRMWritingDirectionModeFirstStrong && _cachedMarkdown.length > 0) {
+      [self renderMarkdownContent:_cachedMarkdown];
+    }
+  }
+}
+
 - (void)requestHeightUpdate
 {
   ENRMRequestHeightUpdate<EnrichedMarkdownTextState>(_state, _heightUpdateCounter, self);
@@ -159,6 +193,10 @@ using namespace facebook::react;
     _forceHeightUpdateOnNextRender = NO;
     _selectionMenuConfig = (ENRMSelectionMenuConfig){.copyAsMarkdown = YES, .copyImageURL = YES};
     _lineBreakStrategy = NSLineBreakStrategyNone;
+    _writingDirectionMode = ENRMWritingDirectionModeFirstStrong;
+    _resolvedLayoutDirection =
+        [[RCTI18nUtil sharedInstance] isRTL] ? NSWritingDirectionRightToLeft : NSWritingDirectionLeftToRight;
+    _dirtyFlags = ENRMDirtyNone;
 
     _fontScaleObserver = [[FontScaleObserver alloc] init];
     __weak EnrichedMarkdownText *weakSelf = self;
@@ -260,8 +298,8 @@ using namespace facebook::react;
   CGFloat maxFontSizeMultiplier = _maxFontSizeMultiplier;
   BOOL allowTrailingMargin = _allowTrailingMargin;
   NSLineBreakStrategy lineBreakStrategy = _lineBreakStrategy;
-
-  NSWritingDirection writingDirection = currentWritingDirection();
+  ENRMWritingDirectionMode writingDirectionMode = _writingDirectionMode;
+  NSWritingDirection resolvedLayoutDirection = _resolvedLayoutDirection;
 
   __block ENRMRenderResult *result = nil;
 
@@ -272,7 +310,8 @@ using namespace facebook::react;
           return NO;
 
         result = ENRMRenderASTNodes(ast.children, config, allowTrailingMargin, allowFontScaling, maxFontSizeMultiplier,
-                                    writingDirection, lineBreakStrategy);
+                                    lineBreakStrategy);
+        ENRMApplyWritingDirectionMode(result.attributedText, writingDirectionMode, resolvedLayoutDirection);
         return YES;
       }
       apply:^{
@@ -292,7 +331,8 @@ using namespace facebook::react;
 
   ENRMRenderResult *result =
       ENRMRenderASTNodes(ast.children, _config, _allowTrailingMargin, _fontScaleObserver.allowFontScaling,
-                         _maxFontSizeMultiplier, currentWritingDirection(), _lineBreakStrategy);
+                         _maxFontSizeMultiplier, _lineBreakStrategy);
+  ENRMApplyWritingDirectionMode(result.attributedText, _writingDirectionMode, _resolvedLayoutDirection);
 
   _lastElementMarginBottom = result.lastElementMarginBottom;
   _accessibilityInfo = result.accessibilityInfo;
@@ -401,7 +441,9 @@ using namespace facebook::react;
   const auto &oldViewProps = *std::static_pointer_cast<EnrichedMarkdownTextProps const>(_props);
   const auto &newViewProps = *std::static_pointer_cast<EnrichedMarkdownTextProps const>(props);
 
-  BOOL stylePropChanged = NO;
+  if (oldViewProps.markdown != newViewProps.markdown) {
+    _dirtyFlags |= ENRMDirtyRender;
+  }
 
   if (_config == nil) {
     _config = [[StyleConfig alloc] init];
@@ -409,11 +451,10 @@ using namespace facebook::react;
     _spoilerManager = [[ENRMSpoilerOverlayManager alloc] initWithTextView:_textView config:_config];
   }
 
-  stylePropChanged = applyMarkdownStyleToConfig(_config, newViewProps.markdownStyle, oldViewProps.markdownStyle);
-
-  if (stylePropChanged) {
+  if (applyMarkdownStyleToConfig(_config, newViewProps.markdownStyle, oldViewProps.markdownStyle)) {
     [ENRMImageAttachment clearAttachmentRegistry];
     _forceHeightUpdateOnNextRender = YES;
+    _dirtyFlags |= ENRMDirtyRender;
   }
 
   NSLayoutManager *layoutManager = _textView.layoutManager;
@@ -439,8 +480,8 @@ using namespace facebook::react;
       [_config setFontScaleMultiplier:_fontScaleObserver.effectiveFontScale];
     }
 
-    stylePropChanged = YES;
     _forceHeightUpdateOnNextRender = YES;
+    _dirtyFlags |= ENRMDirtyRender;
   }
 
   if (newViewProps.maxFontSizeMultiplier != oldViewProps.maxFontSizeMultiplier) {
@@ -450,43 +491,41 @@ using namespace facebook::react;
       [_config setMaxFontSizeMultiplier:_maxFontSizeMultiplier];
     }
 
-    stylePropChanged = YES;
     _forceHeightUpdateOnNextRender = YES;
+    _dirtyFlags |= ENRMDirtyRender;
   }
 
   if (newViewProps.allowTrailingMargin != oldViewProps.allowTrailingMargin) {
     _allowTrailingMargin = newViewProps.allowTrailingMargin;
     _forceHeightUpdateOnNextRender = YES;
+    _dirtyFlags |= ENRMDirtyRender;
   }
 
-  BOOL md4cFlagsChanged = NO;
   if (newViewProps.md4cFlags.underline != oldViewProps.md4cFlags.underline) {
     _md4cFlags.underline = newViewProps.md4cFlags.underline;
-    md4cFlagsChanged = YES;
     _forceHeightUpdateOnNextRender = YES;
+    _dirtyFlags |= ENRMDirtyRender;
   }
   if (newViewProps.md4cFlags.superscript != oldViewProps.md4cFlags.superscript) {
     _md4cFlags.superscript = newViewProps.md4cFlags.superscript;
-    md4cFlagsChanged = YES;
     _forceHeightUpdateOnNextRender = YES;
+    _dirtyFlags |= ENRMDirtyRender;
   }
   if (newViewProps.md4cFlags.subscript != oldViewProps.md4cFlags.subscript) {
     _md4cFlags.subscript = newViewProps.md4cFlags.subscript;
-    md4cFlagsChanged = YES;
     _forceHeightUpdateOnNextRender = YES;
+    _dirtyFlags |= ENRMDirtyRender;
   }
   if (newViewProps.md4cFlags.latexMath != oldViewProps.md4cFlags.latexMath) {
     _md4cFlags.latexMath = newViewProps.md4cFlags.latexMath;
-    md4cFlagsChanged = YES;
     _forceHeightUpdateOnNextRender = YES;
+    _dirtyFlags |= ENRMDirtyRender;
   }
   if (newViewProps.md4cFlags.highlight != oldViewProps.md4cFlags.highlight) {
     _md4cFlags.highlight = newViewProps.md4cFlags.highlight;
-    md4cFlagsChanged = YES;
     _forceHeightUpdateOnNextRender = YES;
+    _dirtyFlags |= ENRMDirtyRender;
   }
-  BOOL markdownChanged = oldViewProps.markdown != newViewProps.markdown;
-  BOOL allowTrailingMarginChanged = newViewProps.allowTrailingMargin != oldViewProps.allowTrailingMargin;
 
   _enableLinkPreview = newViewProps.enableLinkPreview;
 
@@ -516,19 +555,26 @@ using namespace facebook::react;
     _spoilerManager.spoilerOverlay = ENRMSpoilerOverlayFromString(modeStr);
   }
 
-  BOOL lineBreakStrategyChanged = newViewProps.lineBreakStrategyIOS != oldViewProps.lineBreakStrategyIOS;
-  if (lineBreakStrategyChanged) {
+  if (newViewProps.lineBreakStrategyIOS != oldViewProps.lineBreakStrategyIOS) {
     NSString *strategy = [[NSString alloc] initWithUTF8String:newViewProps.lineBreakStrategyIOS.c_str()];
     _lineBreakStrategy = ENRMResolveLineBreakStrategy(strategy);
     _forceHeightUpdateOnNextRender = YES;
+    _dirtyFlags |= ENRMDirtyRender;
   }
 
-  if (markdownChanged || stylePropChanged || md4cFlagsChanged || allowTrailingMarginChanged ||
-      lineBreakStrategyChanged) {
+  if (newViewProps.writingDirection != oldViewProps.writingDirection) {
+    NSString *value = [[NSString alloc] initWithUTF8String:newViewProps.writingDirection.c_str()];
+    _writingDirectionMode = ENRMResolveWritingDirectionMode(value);
+    _forceHeightUpdateOnNextRender = YES;
+    _dirtyFlags |= ENRMDirtyRender;
+  }
+
+  if (_dirtyFlags & ENRMDirtyRender) {
     _pendingStyleFingerprint =
         computeStyleFingerprint(newViewProps.markdownStyle) ^ std::hash<bool>{}(newViewProps.allowTrailingMargin);
     NSString *markdownString = [[NSString alloc] initWithUTF8String:newViewProps.markdown.c_str()];
     [self renderMarkdownContent:markdownString];
+    _dirtyFlags &= ~ENRMDirtyRender;
   }
 
   [super updateProps:props oldProps:oldProps];
