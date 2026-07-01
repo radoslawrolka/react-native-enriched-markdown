@@ -3,6 +3,7 @@ import EnrichedMarkdownTextNativeComponent from '../EnrichedMarkdownTextNativeCo
 import type { MarkdownStyleInternal } from '../EnrichedMarkdownTextNativeComponent';
 import EnrichedMarkdownNativeComponent from '../EnrichedMarkdownNativeComponent';
 import { normalizeMarkdownStyle } from '../normalizeMarkdownStyle';
+import { resolveAccessibilityLabels } from '../accessibilityLabelDefaults';
 import {
   normalizeMenuItem,
   normalizeLegacyBooleanMenuItem,
@@ -121,6 +122,7 @@ export const EnrichedMarkdownText = ({
   spoilerOverlay = 'particles',
   contextMenuItems,
   selectionMenuConfig,
+  accessibilityLabels,
   selectionColor,
   selectionHandleColor,
   textBreakStrategy,
@@ -256,6 +258,11 @@ export const EnrichedMarkdownText = ({
     };
   }, [selectionMenuConfig]);
 
+  const resolvedAccessibilityLabels = useMemo(
+    () => resolveAccessibilityLabels(accessibilityLabels),
+    [accessibilityLabels]
+  );
+
   const sharedProps = {
     markdown,
     markdownStyle: normalizedStyle,
@@ -274,6 +281,7 @@ export const EnrichedMarkdownText = ({
     style: containerStyle,
     contextMenuItems: nativeContextMenuItems,
     selectionMenuConfig: normalizedSelectionMenuConfig,
+    accessibilityLabels: resolvedAccessibilityLabels,
     onContextMenuItemPress: handleContextMenuItemPress,
     selectionColor,
     selectionHandleColor,

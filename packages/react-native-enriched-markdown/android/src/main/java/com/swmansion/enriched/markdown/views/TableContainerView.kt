@@ -18,6 +18,8 @@ import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
+import androidx.core.view.ViewCompat
+import com.swmansion.enriched.markdown.accessibility.AccessibilityLabels
 import com.swmansion.enriched.markdown.parser.MarkdownASTNode
 import com.swmansion.enriched.markdown.parser.MarkdownASTNode.NodeType
 import com.swmansion.enriched.markdown.renderer.Renderer
@@ -49,6 +51,12 @@ class TableContainerView(
   var maxFontSizeMultiplier = 0f
   var onLinkPress: ((String) -> Unit)? = null
   var onLinkLongPress: ((String) -> Unit)? = null
+  var accessibilityLabels: AccessibilityLabels = AccessibilityLabels()
+    set(value) {
+      if (field == value) return
+      field = value
+      if (rowCount > 0) renderGrid()
+    }
 
   var copyLabel: String = ""
   var copyAsMarkdownLabel: String = ""
@@ -57,7 +65,12 @@ class TableContainerView(
     HorizontalScrollView(context).apply {
       isHorizontalScrollBarEnabled = true
       overScrollMode = View.OVER_SCROLL_NEVER
-      addView(GridContainerView(context))
+      importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+      addView(
+        GridContainerView(context).apply {
+          importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        },
+      )
     }
   private val gridContainer get() = scrollView.getChildAt(0) as GridContainerView
 
@@ -96,6 +109,7 @@ class TableContainerView(
   private var tableMarkdown = ""
 
   init {
+    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
     addView(scrollView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
   }
 
@@ -194,6 +208,7 @@ class TableContainerView(
               showContextMenu(view)
               true
             }
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
           }
 
         gridContainer.addView(
@@ -207,10 +222,49 @@ class TableContainerView(
         if (col < row.size) addTextToCell(cellBg, row[col], columnWidth, rowHeight)
         if (!isRtl) xOffset += columnWidth
       }
+
+      addRowAccessibilityOverlay(row, rowIndex, isHeaderRow, yOffset, rowHeight)
+
       if (!isHeaderRow) bodyRowIndex++
       yOffset += rowHeight
     }
     gridContainer.layoutParams = LayoutParams(ceil(totalTableWidth).toInt(), ceil(totalTableHeight).toInt())
+  }
+
+  private fun addRowAccessibilityOverlay(
+    row: List<TableCellData>,
+    rowIndex: Int,
+    isHeaderRow: Boolean,
+    yOffset: Float,
+    rowHeight: Float,
+  ) {
+    val joinedContent = row.joinToString(", ") { it.plainText }
+    val description =
+      accessibilityLabels.tableRow
+        .replace("{n}", (rowIndex + 1).toString())
+        .replace("{content}", joinedContent)
+
+    val overlay =
+      View(context).apply {
+        isClickable = false
+        isLongClickable = false
+        isFocusable = true
+        isScreenReaderFocusable = true
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        contentDescription = description
+        if (isHeaderRow) ViewCompat.setAccessibilityHeading(this, true)
+      }
+    gridContainer.addView(
+      overlay,
+      0,
+      LayoutParams(
+        ceil(totalTableWidth).toInt(),
+        ceil(rowHeight + tableStyle.borderWidth).toInt(),
+      ).apply {
+        leftMargin = 0
+        topMargin = ceil(yOffset).toInt()
+      },
+    )
   }
 
   private fun addTextToCell(
@@ -491,6 +545,7 @@ class TableContainerView(
       movementMethod = LinkLongPressMovementMethod.createInstance()
       layoutDirection = View.LAYOUT_DIRECTION_LOCALE
       textDirection = View.TEXT_DIRECTION_LOCALE
+      importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
     }
   }
 

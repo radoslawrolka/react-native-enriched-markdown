@@ -117,7 +117,8 @@ static EditOverlap classifyOverlap(NSUInteger rangeStart, NSUInteger rangeEnd, N
     return NSMakeRange(start, end - start);
   }
   ENRMFormattingRange *caretLink = [self rangeOfType:ENRMInputStyleTypeLink containingPosition:selection.location];
-  if (caretLink != nil && selection.location > caretLink.range.location && selection.location < NSMaxRange(caretLink.range)) {
+  if (caretLink != nil && selection.location > caretLink.range.location &&
+      selection.location < NSMaxRange(caretLink.range)) {
     return NSMakeRange(NSMaxRange(caretLink.range), 0);
   }
   return selection;
