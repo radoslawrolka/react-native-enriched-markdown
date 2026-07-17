@@ -17,6 +17,7 @@
 #import "FontScaleObserver.h"
 #import "FontUtils.h"
 #import "HeightUpdateUtils.h"
+#import "ImageRequestHeaderUtils.h"
 #import "LinkTapUtils.h"
 #import "MarkdownASTNode.h"
 #import "MarkdownAccessibilityElementBuilder.h"
@@ -468,6 +469,11 @@ typedef NS_OPTIONS(NSUInteger, ENRMDirtyFlags) {
   if (applyMarkdownStyleToConfig(_config, newViewProps.markdownStyle, oldViewProps.markdownStyle)) {
     [ENRMImageAttachment clearAttachmentRegistry];
     _forceHeightUpdateOnNextRender = YES;
+    _dirtyFlags |= ENRMDirtyRender;
+  }
+
+  if (ENRMImageRequestHeadersChanged(oldViewProps.imageRequestHeaders, newViewProps.imageRequestHeaders)) {
+    [_config setImageRequestHeaders:ENRMImageRequestHeadersFromProps(newViewProps.imageRequestHeaders)];
     _dirtyFlags |= ENRMDirtyRender;
   }
 
