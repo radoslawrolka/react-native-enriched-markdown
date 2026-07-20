@@ -94,6 +94,9 @@ interface CodeStyleInternal {
 
 interface ImageStyleInternal {
   height: CodegenTypes.Float;
+  maxHeight: CodegenTypes.Float;
+  aspectRatio: CodegenTypes.Float;
+  resizeMode: string;
   borderRadius: CodegenTypes.Float;
   marginTop: CodegenTypes.Float;
   marginBottom: CodegenTypes.Float;

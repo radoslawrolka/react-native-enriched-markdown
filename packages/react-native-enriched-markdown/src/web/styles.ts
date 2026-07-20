@@ -180,16 +180,55 @@ function thematicBreakStyle(style: MarkdownStyleInternal): CSSProperties {
   };
 }
 
+const RESIZE_MODE_TO_OBJECT_FIT: Record<
+  Exclude<MarkdownStyleInternal['image']['resizeMode'], ''>,
+  NonNullable<CSSProperties['objectFit']>
+> = {
+  contain: 'contain',
+  cover: 'cover',
+  stretch: 'fill',
+  center: 'scale-down',
+  none: 'none',
+};
+
 function imageStyle(style: MarkdownStyleInternal): CSSProperties {
   const image = style.image;
-  return {
-    height: image.height,
+  const base: CSSProperties = {
     borderRadius: image.borderRadius,
     marginTop: image.marginTop,
     marginBottom: image.marginBottom,
     maxWidth: '100%',
     display: 'block',
   };
+
+  // Sizing precedence: aspectRatio > maxHeight > height. resizeMode '' means
+  // legacy sizing — emit today's exact CSS for backward compatibility.
+  if (image.resizeMode === '') {
+    return { ...base, height: image.height };
+  }
+
+  const objectFit = RESIZE_MODE_TO_OBJECT_FIT[image.resizeMode] ?? 'cover';
+
+  if (image.aspectRatio > 0) {
+    return {
+      ...base,
+      width: '100%',
+      aspectRatio: image.aspectRatio,
+      objectFit,
+    };
+  }
+
+  if (image.maxHeight > 0) {
+    return {
+      ...base,
+      width: '100%',
+      height: 'auto',
+      maxHeight: image.maxHeight,
+      objectFit,
+    };
+  }
+
+  return { ...base, width: '100%', height: image.height, objectFit };
 }
 
 function inlineImageStyle(style: MarkdownStyleInternal): CSSProperties {

@@ -134,6 +134,9 @@ static inline NSString *normalizedFontWeight(NSString *fontWeight)
   RCTUIColor *_codeBorderColor;
   // Image properties
   CGFloat _imageHeight;
+  CGFloat _imageMaxHeight;
+  CGFloat _imageAspectRatio;
+  NSString *_imageResizeMode;
   CGFloat _imageBorderRadius;
   CGFloat _imageMarginTop;
   CGFloat _imageMarginBottom;
@@ -408,6 +411,9 @@ static inline NSString *normalizedFontWeight(NSString *fontWeight)
   copy->_codeBackgroundColor = [_codeBackgroundColor copy];
   copy->_codeBorderColor = [_codeBorderColor copy];
   copy->_imageHeight = _imageHeight;
+  copy->_imageMaxHeight = _imageMaxHeight;
+  copy->_imageAspectRatio = _imageAspectRatio;
+  copy->_imageResizeMode = [_imageResizeMode copy];
   copy->_imageBorderRadius = _imageBorderRadius;
   copy->_imageMarginTop = _imageMarginTop;
   copy->_imageMarginBottom = _imageMarginBottom;
@@ -1505,6 +1511,36 @@ static inline NSString *normalizedFontWeight(NSString *fontWeight)
 - (void)setImageHeight:(CGFloat)newValue
 {
   _imageHeight = newValue;
+}
+
+- (CGFloat)imageMaxHeight
+{
+  return _imageMaxHeight;
+}
+
+- (void)setImageMaxHeight:(CGFloat)newValue
+{
+  _imageMaxHeight = newValue;
+}
+
+- (CGFloat)imageAspectRatio
+{
+  return _imageAspectRatio;
+}
+
+- (void)setImageAspectRatio:(CGFloat)newValue
+{
+  _imageAspectRatio = newValue;
+}
+
+- (NSString *)imageResizeMode
+{
+  return _imageResizeMode ?: @"";
+}
+
+- (void)setImageResizeMode:(NSString *)newValue
+{
+  _imageResizeMode = newValue;
 }
 
 - (CGFloat)imageBorderRadius

@@ -67,7 +67,8 @@ typedef NS_OPTIONS(NSUInteger, ENRMDirtyFlags) {
 
 static char kENRMSegmentFadeAnimatorKey;
 
-@interface EnrichedMarkdown () <RCTEnrichedMarkdownViewProtocol, UITextViewDelegate>
+
+@interface EnrichedMarkdown () <RCTEnrichedMarkdownViewProtocol, UITextViewDelegate, ENRMImageLayoutObserver>
 + (ENRMMd4cFlags *)flagsFromProps:(const EnrichedMarkdownMd4cFlagsStruct &)props;
 - (void)emitLinkPress:(NSString *)url;
 - (void)emitLinkLongPress:(NSString *)url;
@@ -477,6 +478,25 @@ static char kENRMSegmentFadeAnimatorKey;
 - (void)requestHeightUpdate
 {
   ENRMRequestHeightUpdate<EnrichedMarkdownState>(_state, _heightUpdateCounter, self);
+}
+
+// A block image in one of the text segments resolved its box height after
+// loading (maxHeight/aspectRatio sizing). The shadow node measured — and
+// cached — this markdown with the pre-load fallback height, so drop those
+// entries, re-stack segments, and re-measure.
+- (void)imageAttachmentDidResolveLayout
+{
+  if (_renderedMarkdown.length > 0) {
+    MeasurementCache::shared().removeMatchingMarkdown(std::string(_renderedMarkdown.UTF8String));
+  }
+
+  if (self.bounds.size.width > 0) {
+    [self setNeedsLayout];
+    CGSize measured = [self measureSize:self.bounds.size.width];
+    if (needsHeightUpdate(measured, self.bounds)) {
+      [self requestHeightUpdate];
+    }
+  }
 }
 
 - (void)renderMarkdownContent:(NSString *)markdownString

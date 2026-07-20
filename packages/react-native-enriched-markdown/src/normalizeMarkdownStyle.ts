@@ -161,7 +161,15 @@ const DEFAULT_NORMALIZED_STYLE = Object.freeze({
     backgroundColor: normalizeColor('#FDF2F4')!,
     borderColor: normalizeColor('#F8D7DA')!,
   },
-  image: { height: 200, borderRadius: 8, marginTop: 0, marginBottom: 16 },
+  image: {
+    height: 200,
+    maxHeight: 0,
+    aspectRatio: 0,
+    resizeMode: '' as const,
+    borderRadius: 8,
+    marginTop: 0,
+    marginBottom: 16,
+  },
   inlineImage: { size: 20 },
   thematicBreak: {
     color: normalizeColor('#E5E7EB')!,
@@ -295,6 +303,12 @@ export const normalizeMarkdownStyle = (
     (result.taskList as { checkboxSize: number }).checkboxSize = Math.round(
       listSize * 0.9
     );
+  }
+
+  // maxHeight/aspectRatio sizing is resize-mode driven; default to 'cover'.
+  const image = result.image as MarkdownStyleInternal['image'];
+  if (!image.resizeMode && (image.maxHeight > 0 || image.aspectRatio > 0)) {
+    (result.image as { resizeMode: string }).resizeMode = 'cover';
   }
 
   if (!style.highlight?.color) {

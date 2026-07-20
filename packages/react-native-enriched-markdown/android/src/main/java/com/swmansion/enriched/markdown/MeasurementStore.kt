@@ -97,6 +97,7 @@ object MeasurementStore {
     id: Int,
     spannable: CharSequence?,
     paint: TextPaint,
+    trailingMarginBottomPx: Float = 0f,
   ): Boolean {
     val cached = data[id]
     val width = cached?.cachedWidth ?: 0f
@@ -104,7 +105,14 @@ object MeasurementStore {
     val existingHash = cached?.markdownHash ?: 0
     val paintParams = PaintParams(paint.typeface ?: Typeface.DEFAULT, paint.textSize)
 
-    val newSize = measure(width, spannable, paint, id)
+    var newSize = measure(width, spannable, paint, id)
+    if (trailingMarginBottomPx > 0f) {
+      newSize =
+        YogaMeasureOutput.make(
+          YogaMeasureOutput.getWidth(newSize),
+          YogaMeasureOutput.getHeight(newSize) + PixelUtil.toDIPFromPixel(trailingMarginBottomPx),
+        )
+    }
     data[id] = MeasurementParams(width, newSize, spannable, paintParams, existingHash)
     return oldSize != newSize
   }
@@ -474,6 +482,18 @@ object MeasurementStore {
     }
   }
 
+  private fun prepareImageSpansForMeasurement(
+    text: CharSequence?,
+    widthPx: Int,
+  ) {
+    // widthPx == 1 is the coerceAtLeast(1) fallback for a not-yet-measured view
+    if (widthPx <= 1) return
+    val spanned = text as? android.text.Spanned ?: return
+    spanned
+      .getSpans(0, spanned.length, com.swmansion.enriched.markdown.spans.ImageSpan::class.java)
+      .forEach { it.prepareForMeasurement(spanned, widthPx) }
+  }
+
   private fun createStaticLayout(
     text: CharSequence,
     fontSize: Float,
@@ -481,6 +501,7 @@ object MeasurementStore {
     viewId: Int?,
   ): StaticLayout {
     measurePaint.textSize = fontSize
+    prepareImageSpansForMeasurement(text, widthPx)
     return StaticLayout.Builder
       .obtain(text, 0, text.length, measurePaint, widthPx)
       .setIncludePad(false)
@@ -562,6 +583,7 @@ object MeasurementStore {
   ): Long {
     val content = text ?: ""
     val safeWidth = ceil(maxWidth).toInt().coerceAtLeast(1)
+    prepareImageSpansForMeasurement(content, safeWidth)
 
     val builder =
       StaticLayout.Builder
@@ -601,6 +623,7 @@ object MeasurementStore {
   ): Pair<Long, StaticLayout> {
     val content = text ?: ""
     val widthPx = ceil(maxWidth).toInt().coerceAtLeast(1)
+    prepareImageSpansForMeasurement(content, widthPx)
 
     val layout =
       StaticLayout.Builder

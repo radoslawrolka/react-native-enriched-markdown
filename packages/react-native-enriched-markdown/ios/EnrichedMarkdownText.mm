@@ -46,7 +46,7 @@ typedef NS_OPTIONS(NSUInteger, ENRMDirtyFlags) {
   ENRMDirtyRender = 1 << 0,
 };
 
-@interface EnrichedMarkdownText () <RCTEnrichedMarkdownTextViewProtocol, UITextViewDelegate>
+@interface EnrichedMarkdownText () <RCTEnrichedMarkdownTextViewProtocol, UITextViewDelegate, ENRMImageLayoutObserver>
 + (ENRMMd4cFlags *)flagsFromProps:(const EnrichedMarkdownTextMd4cFlagsStruct &)props;
 - (void)setupTextView;
 - (void)renderMarkdownContent:(NSString *)markdownString;
@@ -188,6 +188,23 @@ typedef NS_OPTIONS(NSUInteger, ENRMDirtyFlags) {
 - (void)requestHeightUpdate
 {
   ENRMRequestHeightUpdate<EnrichedMarkdownTextState>(_state, _heightUpdateCounter, self);
+}
+
+// A block image resolved its box height after loading (maxHeight/aspectRatio
+// sizing). The shadow node measured — and cached — this markdown with the
+// pre-load fallback height, so drop those entries and re-measure.
+- (void)imageAttachmentDidResolveLayout
+{
+  if (_renderedMarkdown.length > 0) {
+    facebook::react::MeasurementCache::shared().removeMatchingMarkdown(std::string(_renderedMarkdown.UTF8String));
+  }
+
+  if (self.bounds.size.width > 0) {
+    CGSize measured = [self measureSize:self.bounds.size.width];
+    if (needsHeightUpdate(measured, self.bounds)) {
+      [self requestHeightUpdate];
+    }
+  }
 }
 
 - (instancetype)initWithFrame:(CGRect)frame
